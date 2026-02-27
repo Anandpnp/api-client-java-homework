@@ -391,7 +391,7 @@ public class Main {
     JsonNode root = objectMapper.readTree(json);
     JsonNode arr = root.has("assets") ? root.get("assets") : root;
     if (!arr.isArray() || arr.size() == 0) {
-      throw new IllegalStateException("No assets found in response: " + json);
+      throw new IllegalStateException("No assets found in response : " + json);
     }
     return arr.get(0).path("id").asText();
   }
