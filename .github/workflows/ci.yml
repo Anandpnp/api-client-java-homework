@@ -2,15 +2,15 @@ name: CI (Java)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
     paths:
-      - 'api-client-java/**'
+      - "api-client-java/**"
+      - ".github/workflows/ci.yml"
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
     paths:
-      - 'api-client-java/**'
+      - "api-client-java/**"
+      - ".github/workflows/ci.yml"
 
 jobs:
   java:
