@@ -1,0 +1,88 @@
+#
+#  Copyright (C) 2000-2024
+#    by aixigo AG, Aachen, Germany.
+#
+#  All rights reserved. This material is confidential and proprietary to aixigo
+#  AG and no part of this material should be reproduced, published in any form
+#  by any means, electronic or mechanical including photocopy or any
+#  information storage or retrieval system nor should the material be disclosed
+#  to third parties without the express written authorization of aixigo AG.
+#
+#  aixigo AG
+#  http://www.aixigo.com
+#  Aachen, Germany
+#
+
+workflow:
+  rules:
+    -  if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    -  if: $CI_PIPELINE_SOURCE == 'push' && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    -  if: $CI_PIPELINE_SOURCE == 'push' && $CI_OPEN_MERGE_REQUESTS
+       when: never
+    -  when: always
+
+env java:
+  stage: .pre
+  image: maven:3-eclipse-temurin-11-alpine
+  artifacts:
+    reports:
+      dotenv: java.env
+  script:
+    - PROJECT_NAME="$(cd api-client-java && mvn help:evaluate -Dexpression=project.name -q -DforceStdout)"
+    - PROJECT_VERSION="$(cd api-client-java && mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+    - >
+      ( echo "JAVA_PROJECT_NAME=${PROJECT_NAME}" ;
+      echo "JAVA_PROJECT_VERSION=${PROJECT_VERSION}" ) > java.env
+
+env typescript:
+  stage: .pre
+  image: node:18-alpine
+  artifacts:
+    reports:
+      dotenv: typescript.env
+  script:
+    - PROJECT_NAME="$(cd api-client-typescript && npm pkg get name | tr -d '"')"
+    - PROJECT_VERSION="$(cd api-client-typescript && npm pkg get version | tr -d '"')"
+    - >
+      ( echo "TYPESCRIPT_PROJECT_NAME=${PROJECT_NAME}" ;
+      echo "TYPESCRIPT_PROJECT_VERSION=${PROJECT_VERSION}" ) > typescript.env
+
+build java:
+  stage: build
+  image: maven:3-eclipse-temurin-11-alpine
+  needs:
+    - env java
+  artifacts:
+    paths:
+      - api-client-java/target/*.jar
+  script:
+    - cd api-client-java
+    - mvn install -DskipTests
+
+build typescript:
+  stage: build
+  image: node:18-alpine
+  needs:
+    - env typescript
+  artifacts:
+    paths:
+      - api-client-typescript/lib/**/*.js
+  script:
+    - cd api-client-typescript
+    - npm install
+    - npm run build
+
+archive:
+  stage: build
+  needs:
+    - env java
+    - env typescript
+  script:
+    - git archive
+          --prefix=api-client-java
+          --output=api-client-java-$JAVA_PACKAGE_VERSION.zip
+          HEAD:api-client-java
+    - git archive
+          --prefix=api-client-typescript
+          --output=api-client-typescript-$TYPESCRIPT_PACKAGE_VERSION.zip
+          HEAD:api-client-typescript
