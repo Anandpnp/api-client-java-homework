@@ -1,2 +1,16 @@
 /target
 /dependency-reduced-pom.xml
+.idea/
+
+# macOS
+.DS_Store
+
+# IntelliJ
+.idea/
+*.iml
+
+# Maven
+**/target/
+
+# Node
+**/node_modules/
