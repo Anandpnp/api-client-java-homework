@@ -50,7 +50,7 @@ npm run start
 ▶ Curl Examples
 cd api-client-curl
 
-# run your curl scripts / commands here
+# run your curl scripts / commands here for example
 
 🔐 Notes
 Do not commit tokens to GitHub.
