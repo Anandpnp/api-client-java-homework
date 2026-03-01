@@ -1,13 +1,43 @@
 # API Clients (Java + TypeScript + Curl)
 
-This repo contains multiple API client implementations.
+This repository contains multiple client implementations for the AIXIGO demo APIs.
 
-## Projects
-- **api-client-java** — Java client + examples
-- **api-client-typescript** — TypeScript client + examples
-- **api-client-curl** — curl examples / scripts
+## Repository structure
 
-## How to run
-See each project folder’s README:
-- `api-client-java/README.md`
-- `api-client-typescript/README.md`
+- `api-client-java/` — Java client (Maven) + examples
+- `api-client-typescript/` — TypeScript client + examples
+- `api-client-curl/` — curl examples / scripts
+- `spec.analytics.json`, `spec.openapi.json`, `spec.openapi.yaml` — API specifications
+
+## Prerequisites
+
+- Java: 11+ (Java 17 recommended)
+- Maven: 3.8+
+- Node.js: 18+ (for the TypeScript client)
+
+## Quick start
+
+### Java client
+
+```bash
+cd api-client-java
+# set token (example)
+export X_ID_TOKEN="YOUR_TOKEN_HERE"
+mvn clean test
+mvn exec:java
+
+TypeScript client
+cd api-client-typescript
+npm install
+# set token (example)
+export X_ID_TOKEN="YOUR_TOKEN_HERE"
+npm run build
+npm run start
+Curl examples
+cd api-client-curl
+# run your curl scripts / commands here
+Notes
+
+Do not commit tokens to GitHub.
+
+Each subproject contains its own README with detailed instructions.
