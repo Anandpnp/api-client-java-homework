@@ -16,8 +16,8 @@
 
   <properties>
     <mainClass>com.aixigo.sample_projects.api_client_java.Main</mainClass>
-    <maven.compiler.source>11</maven.compiler.source>
-    <maven.compiler.target>11</maven.compiler.target>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
     <feign-version>13.2</feign-version>
     <feign-form-version>3.8.0</feign-form-version>
     <jackson-version>2.17.1</jackson-version>
@@ -68,6 +68,13 @@
     </dependency>
 
     <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
       <groupId>io.github.openfeign</groupId>
       <artifactId>feign-slf4j</artifactId>
       <version>${feign-version}</version>
@@ -109,12 +116,7 @@
       <version>2.1.1</version>
     </dependency>
 
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
-      <version>5.9.2</version>
-      <scope>test</scope>
-    </dependency>
+
   </dependencies>
 
   <build>
@@ -203,6 +205,12 @@
         <configuration>
           <mainClass>${mainClass}</mainClass>
         </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
       </plugin>
 
       <plugin>

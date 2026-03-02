@@ -30,6 +30,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findAssetPriceEurFromSnapshot;
+import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findUsdEurPer1UsdFromAssetApi;
+
 public class Main {
 
   // ========= API101 (Client Profiling) =========
@@ -96,6 +99,7 @@ public class Main {
   }
 
   public static void main(String[] args) throws Exception {
+
     final String profilingBaseUrl = (args.length > 0) ? args[0] : DEFAULT_BASE_URL;
     final String analyticsBaseUrl = (args.length > 1) ? args[1] : ANALYTICS_BASE_URL;
 
@@ -394,44 +398,6 @@ public class Main {
       throw new IllegalStateException("No assets found in response : " + json);
     }
     return arr.get(0).path("id").asText();
-  }
-
-  private static double findAssetPriceEurFromSnapshot(ObjectMapper om, String snapshotJson, String assetId) throws Exception {
-    JsonNode root = om.readTree(snapshotJson);
-    JsonNode holdings = root.path("holdings");
-    if (!holdings.isArray()) return Double.NaN;
-
-    for (JsonNode holding : holdings) {
-      JsonNode assets = holding.path("assets");
-      if (!assets.isArray()) continue;
-
-      for (JsonNode a : assets) {
-        if (assetId.equals(a.path("id").asText())) {
-          JsonNode dq = a.path("quote").path("displayQuote").path("amount");
-          if (dq.isNumber()) return dq.asDouble();
-
-          JsonNode q = a.path("quote").path("quote").path("amount");
-          if (q.isNumber()) return q.asDouble();
-        }
-      }
-    }
-    return Double.NaN;
-  }
-
-  private static double findUsdEurPer1UsdFromAssetApi(ObjectMapper om, String usdAssetJson) throws Exception {
-    JsonNode root = om.readTree(usdAssetJson);
-    JsonNode arr = root.has("assets") ? root.get("assets") : root;
-    if (!arr.isArray() || arr.size() == 0) return Double.NaN;
-
-    JsonNode usd = arr.get(0);
-
-    JsonNode dq = usd.path("quote").path("displayQuote").path("amount");
-    if (dq.isNumber()) return dq.asDouble();
-
-    JsonNode q = usd.path("quote").path("quote").path("amount");
-    if (q.isNumber()) return q.asDouble();
-
-    return Double.NaN;
   }
 
   private static void ensureNotNaN(double v, String label) {
