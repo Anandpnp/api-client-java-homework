@@ -13,12 +13,16 @@ class AssetPriceParserTest {
   void returnsDisplayQuoteAmountWhenPresent() throws Exception {
     String json = """
             {
-              "assets": [
+              "holdings": [
                 {
-                  "id": "A1",
-                  "quote": {
-                    "displayQuote": { "amount": 123.45 }
-                  }
+                  "assets": [
+                    {
+                      "id": "A1",
+                      "quote": {
+                        "displayQuote": { "amount": 123.45 }
+                      }
+                    }
+                  ]
                 }
               ]
             }
@@ -32,12 +36,16 @@ class AssetPriceParserTest {
   void returnsQuoteAmountWhenDisplayQuoteMissing() throws Exception {
     String json = """
             {
-              "assets": [
+              "holdings": [
                 {
-                  "id": "A1",
-                  "quote": {
-                    "quote": { "amount": 99.0 }
-                  }
+                  "assets": [
+                    {
+                      "id": "A1",
+                      "quote": {
+                        "quote": { "amount": 99.0 }
+                      }
+                    }
+                  ]
                 }
               ]
             }
@@ -50,27 +58,36 @@ class AssetPriceParserTest {
   @Test
   void returnsNaNWhenAssetIdNotFound() throws Exception {
     String json = """
-            { "assets": [ { "id": "A1", "quote": { "displayQuote": { "amount": 10 } } } ] }
+            {
+              "holdings": [
+                {
+                  "assets": [
+                    { "id": "A1", "quote": { "displayQuote": { "amount": 10 } } }
+                  ]
+                }
+              ]
+            }
             """;
 
     double price = AssetPriceParser.findAssetPriceEurFromSnapshot(om, json, "DOES_NOT_EXIST");
     assertTrue(Double.isNaN(price));
   }
 
+  // ---------- USD/EUR tests: NO CHANGE NEEDED ----------
+
   @Test
   void usdEur_returnsDisplayQuoteAmountWhenPresent() throws Exception {
-    ObjectMapper om = new ObjectMapper();
-
-    String json =
-      "{\n" +
-        "  \"assets\": [\n" +
-        "    {\n" +
-        "      \"quote\": {\n" +
-        "        \"displayQuote\": { \"amount\": 0.92 }\n" +
-        "      }\n" +
-        "    }\n" +
-        "  ]\n" +
-        "}";
+    String json = """
+      {
+        "assets": [
+          {
+            "quote": {
+              "displayQuote": { "amount": 0.92 }
+            }
+          }
+        ]
+      }
+      """;
 
     double rate = AssetPriceParser.findUsdEurPer1UsdFromAssetApi(om, json);
     assertEquals(0.92, rate, 1e-9);
@@ -78,18 +95,17 @@ class AssetPriceParserTest {
 
   @Test
   void usdEur_fallsBackToQuoteAmountWhenDisplayQuoteMissing() throws Exception {
-    ObjectMapper om = new ObjectMapper();
-
-    String json =
-      "{\n" +
-        "  \"assets\": [\n" +
-        "    {\n" +
-        "      \"quote\": {\n" +
-        "        \"quote\": { \"amount\": 0.91 }\n" +
-        "      }\n" +
-        "    }\n" +
-        "  ]\n" +
-        "}";
+    String json = """
+      {
+        "assets": [
+          {
+            "quote": {
+              "quote": { "amount": 0.91 }
+            }
+          }
+        ]
+      }
+      """;
 
     double rate = AssetPriceParser.findUsdEurPer1UsdFromAssetApi(om, json);
     assertEquals(0.91, rate, 1e-9);
@@ -97,13 +113,10 @@ class AssetPriceParserTest {
 
   @Test
   void usdEur_returnsNaNWhenAssetsMissingOrEmpty() throws Exception {
-    ObjectMapper om = new ObjectMapper();
-
     String json1 = "{ \"assets\": [] }";
     assertTrue(Double.isNaN(AssetPriceParser.findUsdEurPer1UsdFromAssetApi(om, json1)));
 
     String json2 = "{ \"assets\": [ { \"quote\": {} } ] }";
     assertTrue(Double.isNaN(AssetPriceParser.findUsdEurPer1UsdFromAssetApi(om, json2)));
   }
-
 }
