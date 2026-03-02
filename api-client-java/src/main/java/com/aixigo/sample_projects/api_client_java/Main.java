@@ -34,9 +34,6 @@ import java.util.UUID;
 import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findAssetPriceEurFromSnapshot;
 import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findUsdEurPer1UsdFromAssetApi;
 
-import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findAssetPriceEurFromSnapshot;
-import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findUsdEurPer1UsdFromAssetApi;
-
 public class Main {
 
   // ========= API101 (Client Profiling) =========
