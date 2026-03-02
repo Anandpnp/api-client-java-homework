@@ -29,6 +29,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findAssetPriceEurFromSnapshot;
 import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findUsdEurPer1UsdFromAssetApi;
@@ -36,7 +37,7 @@ import static com.aixigo.sample_projects.api_client_java.AssetPriceParser.findUs
 public class Main {
 
   // ========= API101 (Client Profiling) =========
-  private static final String DEFAULT_BASE_URL = "https://demo.portal.aixigo.cloud/client-profiling";
+  private static final String PROFILING_BASE_URL = "https://demo.portal.aixigo.cloud/client-profiling";
   private static final String ACCEPT_LANGUAGE = "en";
   private static final String TAG_NATURAL_PERSON = "natural_person";
   private static final String JUSTIFICATION_TEXT = "API101";
@@ -77,7 +78,7 @@ public class Main {
     })
     Response createTemporaryContract(Object body);
 
-    // Return Response so we can print body on 400
+    // Return Response so we can debug on non-2xx
     @RequestLine("GET /portfolio/assets-snapshot?when={when}&aggregation={aggregation}&contract={contract}&currency={currency}")
     @Headers("Accept: application/json")
     Response getAssetsSnapshot(
@@ -98,121 +99,105 @@ public class Main {
     Response getRiskProfileRaw(@Param("id") String id, @Param("acceptLanguage") String acceptLanguage);
   }
 
+  // ===== Result holder for API102 =====
+  private static final class Api102Results {
+    final String contract1Id;
+    final String contract2Id;
+    final double contract1ReturnPct;
+    final double contract2ReturnPct;
+
+    Api102Results(String c1Id, String c2Id, double c1Pct, double c2Pct) {
+      this.contract1Id = c1Id;
+      this.contract2Id = c2Id;
+      this.contract1ReturnPct = c1Pct;
+      this.contract2ReturnPct = c2Pct;
+    }
+  }
+
   public static void main(String[] args) throws Exception {
 
-    final String profilingBaseUrl = (args.length > 0) ? args[0] : DEFAULT_BASE_URL;
-    final String analyticsBaseUrl = (args.length > 1) ? args[1] : ANALYTICS_BASE_URL;
-
-    final ObjectMapper objectMapper = new ObjectMapper()
+    final ObjectMapper mapper = new ObjectMapper()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
       .registerModule(new JavaTimeModule());
 
     final RequestInterceptor auth = buildAuthInterceptor();
 
-    // ========= API102 clients =========
+    // Run API102 (contracts & returns)
+    Api102Results api102 = executeApi102(mapper, auth, ANALYTICS_BASE_URL);
+
+    // Run API101 (risk profile)
+    String riskProfileId = executeApi101(mapper, auth, PROFILING_BASE_URL);
+
+    // Print EXACT requested format (plus contract IDs)
+    printFinalOutput(api102, riskProfileId);
+  }
+
+  // ============================================================
+  // =========================== API102 =========================
+  // ============================================================
+  private static Api102Results executeApi102(ObjectMapper mapper,
+                                             RequestInterceptor auth,
+                                             String analyticsBaseUrl) throws Exception {
+
     final RawAssetApi rawAssetApi = Feign.builder()
       .decoder(new StringDecoder())
       .requestInterceptor(auth)
       .target(RawAssetApi.class, analyticsBaseUrl);
 
     final RawPortfolioApi rawPortfolioApi = Feign.builder()
-      .encoder(new JacksonEncoder(objectMapper))
+      .encoder(new JacksonEncoder(mapper))
       .decoder(new StringDecoder())
       .requestInterceptor(auth)
       .target(RawPortfolioApi.class, analyticsBaseUrl);
 
-    // ========= API102 Step 1: fetch asset IDs =========
-    final String dbId     = extractFirstAssetId(objectMapper, rawAssetApi.getAssets(ISIN_DB, WHEN_START));
-    final String citiId   = extractFirstAssetId(objectMapper, rawAssetApi.getAssets(ISIN_CITI, WHEN_START));
-    final String amundiId = extractFirstAssetId(objectMapper, rawAssetApi.getAssets(ISIN_AMUNDI, WHEN_START));
-    final String eurId    = extractFirstAssetId(objectMapper, rawAssetApi.getAssets(ASSET_EUR, WHEN_START));
-    final String usdId    = extractFirstAssetId(objectMapper, rawAssetApi.getAssets(ASSET_USD, WHEN_START));
+    // Step 1: fetch asset IDs
+    final String dbId     = extractFirstAssetId(mapper, rawAssetApi.getAssets(ISIN_DB, WHEN_START));
+    final String citiId   = extractFirstAssetId(mapper, rawAssetApi.getAssets(ISIN_CITI, WHEN_START));
+    final String amundiId = extractFirstAssetId(mapper, rawAssetApi.getAssets(ISIN_AMUNDI, WHEN_START));
+    final String eurId    = extractFirstAssetId(mapper, rawAssetApi.getAssets(ASSET_EUR, WHEN_START));
+    final String usdId    = extractFirstAssetId(mapper, rawAssetApi.getAssets(ASSET_USD, WHEN_START));
 
-    System.out.println("dbId=" + dbId);
-    System.out.println("citiId=" + citiId);
-    System.out.println("amundiId=" + amundiId);
-    System.out.println("eurId=" + eurId);
-    System.out.println("usdId=" + usdId);
+    // Step 2: create temporary contract #1
+    final String contractId1 = createContract1(mapper, rawPortfolioApi, dbId, citiId, amundiId, eurId);
 
-    // ========= API102 Step 2: create temporary contract #1 =========
-    // FIX: contractId IS REQUIRED in your environment
-    final String contractId1Requested = "contract_" + java.util.UUID.randomUUID();
+    // Step 3: assets-snapshot for start/end (ASSET, priced in EUR)
+    final String snap1Start = getSnapshotOrThrow(rawPortfolioApi, mapper, WHEN_START, "ASSET", contractId1, "EUR", "CONTRACT1_START");
+    final String snap1End   = getSnapshotOrThrow(rawPortfolioApi, mapper, WHEN_END,   "ASSET", contractId1, "EUR", "CONTRACT1_END");
 
-    final ObjectNode contract1 = objectMapper.createObjectNode();
-    contract1.put("contractId", contractId1Requested);
-    contract1.put("when", WHEN_START);
-    contract1.put("useCorporateActions", true);
+    // Compute contract #1 value at start/end
+    final double pDbStart     = priceOrThrow(mapper, snap1Start, dbId, "DB price @ start");
+    final double pCitiStart   = priceOrThrow(mapper, snap1Start, citiId, "CITI price @ start");
+    final double pAmundiStart = priceOrThrow(mapper, snap1Start, amundiId, "AMUNDI price @ start");
+    final double pEurStart    = priceOrThrow(mapper, snap1Start, eurId, "EUR price @ start");
 
-    final ArrayNode investments1 = contract1.putArray("investments");
-    investments1.add(investment(objectMapper, "POS_DB",       dbId,     QTY_DB,     "EUR"));
-    investments1.add(investment(objectMapper, "POS_CITI",     citiId,   QTY_CITI,   "USD"));
-    investments1.add(investment(objectMapper, "POS_AMUNDI",   amundiId, QTY_AMUNDI, "EUR"));
-    investments1.add(investment(objectMapper, "POS_EUR_CASH", eurId,    QTY_EUR,    "EUR"));
+    final double v1Start =
+      QTY_DB * pDbStart
+        + QTY_CITI * pCitiStart
+        + QTY_AMUNDI * pAmundiStart
+        + QTY_EUR * pEurStart;
 
-    System.out.println("TEMP_CONTRACT_1_REQUEST=");
-    System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(contract1));
+    final double pDbEnd     = priceOrThrow(mapper, snap1End, dbId, "DB price @ end");
+    final double pCitiEnd   = priceOrThrow(mapper, snap1End, citiId, "CITI price @ end");
+    final double pAmundiEnd = priceOrThrow(mapper, snap1End, amundiId, "AMUNDI price @ end");
+    final double pEurEnd    = priceOrThrow(mapper, snap1End, eurId, "EUR price @ end");
 
-    final Response resp1 = rawPortfolioApi.createTemporaryContract(contract1);
-    final String respBody1 = readBody(resp1);
-
-    System.out.println("TEMP_CONTRACT_1_STATUS=" + resp1.status());
-    System.out.println("TEMP_CONTRACT_1_HEADERS=" + resp1.headers());
-    System.out.println("TEMP_CONTRACT_1_RESPONSE=");
-    System.out.println(respBody1);
-
-    if (resp1.status() < 200 || resp1.status() >= 300) {
-      throw new IllegalStateException("TEMP_CONTRACT_1 failed. See response above.");
-    }
-
-    // Some environments echo the same id back; if not, fall back to requested
-    String contractId1 = objectMapper.readTree(respBody1).path("contractId").asText(null);
-    if (contractId1 == null || contractId1.isBlank()) contractId1 = contractId1Requested;
-
-    System.out.println("contractId_1=" + contractId1);
-
-    // ========= API102 Step 3: assets-snapshot (ASSET) for start/end =========
-    final String snap1StartAsset = getSnapshotOrThrow(rawPortfolioApi, objectMapper, WHEN_START, "ASSET", contractId1, "EUR", "CONTRACT1_START");
-    final String snap1EndAsset   = getSnapshotOrThrow(rawPortfolioApi, objectMapper, WHEN_END,   "ASSET", contractId1, "EUR", "CONTRACT1_END");
-
-    // ---- Compute contract #1 value at start/end in EUR from snapshot prices ----
-    final double pDbStart     = findAssetPriceEurFromSnapshot(objectMapper, snap1StartAsset, dbId);
-    final double pCitiStart   = findAssetPriceEurFromSnapshot(objectMapper, snap1StartAsset, citiId);
-    final double pAmundiStart = findAssetPriceEurFromSnapshot(objectMapper, snap1StartAsset, amundiId);
-    final double pEurStart    = findAssetPriceEurFromSnapshot(objectMapper, snap1StartAsset, eurId);
-
-    ensureNotNaN(pDbStart, "DB price @ start");
-    ensureNotNaN(pCitiStart, "CITI price @ start");
-    ensureNotNaN(pAmundiStart, "AMUNDI price @ start");
-    ensureNotNaN(pEurStart, "EUR price @ start");
-
-    final double v1Start = QTY_DB * pDbStart + QTY_CITI * pCitiStart + QTY_AMUNDI * pAmundiStart + QTY_EUR * pEurStart;
-
-    final double pDbEnd     = findAssetPriceEurFromSnapshot(objectMapper, snap1EndAsset, dbId);
-    final double pCitiEnd   = findAssetPriceEurFromSnapshot(objectMapper, snap1EndAsset, citiId);
-    final double pAmundiEnd = findAssetPriceEurFromSnapshot(objectMapper, snap1EndAsset, amundiId);
-    final double pEurEnd    = findAssetPriceEurFromSnapshot(objectMapper, snap1EndAsset, eurId);
-
-    ensureNotNaN(pDbEnd, "DB price @ end");
-    ensureNotNaN(pCitiEnd, "CITI price @ end");
-    ensureNotNaN(pAmundiEnd, "AMUNDI price @ end");
-    ensureNotNaN(pEurEnd, "EUR price @ end");
-
-    final double v1End = QTY_DB * pDbEnd + QTY_CITI * pCitiEnd + QTY_AMUNDI * pAmundiEnd + QTY_EUR * pEurEnd;
+    final double v1End =
+      QTY_DB * pDbEnd
+        + QTY_CITI * pCitiEnd
+        + QTY_AMUNDI * pAmundiEnd
+        + QTY_EUR * pEurEnd;
 
     final double r1 = (v1End / v1Start) - 1.0;
 
-    System.out.println("CONTRACT1_VALUE_EUR_2024_01_01=" + v1Start);
-    System.out.println("CONTRACT1_VALUE_EUR_2025_01_01=" + v1End);
-    System.out.printf("CONTRACT1_TOTAL_RETURN_2024=%.4f%%%n", r1 * 100.0);
+    // Step 4: EU-only value at start date (Deutsche Bank + Amundi + EUR cash)
+    final double euValueEurStart =
+      QTY_DB * pDbStart
+        + QTY_AMUNDI * pAmundiStart
+        + QTY_EUR * pEurStart;
 
-    // ========= API102 Step 4: Contract #2 (EU-only value invested into USD) =========
-    // EU value definition per homework: Deutsche Bank + Amundi + EUR cash (exclude Citi)
-    final double euValueEurStart = QTY_DB * pDbStart + QTY_AMUNDI * pAmundiStart + QTY_EUR * pEurStart;
-    System.out.println("EU_ONLY_VALUE_EUR_2024_01_01=" + euValueEurStart);
-
-    // Convert EUR -> USD using "EUR per 1 USD" from /asset/assets for CURRENCY:USD.USD at start date
+    // Convert EUR -> USD using "EUR per 1 USD" from /asset/assets at start date
     final String usdAssetJsonStart = rawAssetApi.getAssets(ASSET_USD, WHEN_START);
-    final double eurPerUsdStart = findUsdEurPer1UsdFromAssetApi(objectMapper, usdAssetJsonStart);
+    final double eurPerUsdStart = findUsdEurPer1UsdFromAssetApi(mapper, usdAssetJsonStart);
     if (Double.isNaN(eurPerUsdStart) || eurPerUsdStart <= 0) {
       throw new IllegalStateException(
         "Cannot read EUR-per-USD from /asset/assets for " + ASSET_USD + " at " + WHEN_START + ". Response: " + usdAssetJsonStart
@@ -221,63 +206,92 @@ public class Main {
 
     final double usdQtyForContract2 = euValueEurStart / eurPerUsdStart;
 
-    System.out.println("EUR_PER_1_USD_2024_01_01=" + eurPerUsdStart);
-    System.out.println("CONTRACT2_USD_QTY=" + usdQtyForContract2);
+    // Step 5: create temporary contract #2 (USD cash only)
+    final String contractId2 = createContract2Usd(mapper, rawPortfolioApi, usdId, usdQtyForContract2);
 
-    // Build & create contract #2 (USD cash only)
-    final String contractId2Requested = "contract_" + java.util.UUID.randomUUID();
-
-    final ObjectNode contract2 = objectMapper.createObjectNode();
-    contract2.put("contractId", contractId2Requested);
-    contract2.put("when", WHEN_START);
-    contract2.put("useCorporateActions", true);
-
-    final ArrayNode investments2 = contract2.putArray("investments");
-    investments2.add(investment(objectMapper, "POS_USD_CASH", usdId, usdQtyForContract2, "USD"));
-
-    System.out.println("TEMP_CONTRACT_2_REQUEST=");
-    System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(contract2));
-
-    final Response resp2 = rawPortfolioApi.createTemporaryContract(contract2);
-    final String respBody2 = readBody(resp2);
-
-    System.out.println("TEMP_CONTRACT_2_STATUS=" + resp2.status());
-    System.out.println("TEMP_CONTRACT_2_HEADERS=" + resp2.headers());
-    System.out.println("TEMP_CONTRACT_2_RESPONSE=");
-    System.out.println(respBody2);
-
-    if (resp2.status() < 200 || resp2.status() >= 300) {
-      throw new IllegalStateException("TEMP_CONTRACT_2 failed. See response above.");
-    }
-
-    String contractId2 = objectMapper.readTree(respBody2).path("contractId").asText(null);
-    if (contractId2 == null || contractId2.isBlank()) contractId2 = contractId2Requested;
-
-    System.out.println("contractId_2=" + contractId2);
-
-    // Snapshot for contract #2 at start/end (ASSET so we can price USD currency in EUR)
-    final String snap2StartAsset = getSnapshotOrThrow(rawPortfolioApi, objectMapper, WHEN_START, "ASSET", contractId2, "EUR", "CONTRACT2_START");
-    final String snap2EndAsset   = getSnapshotOrThrow(rawPortfolioApi, objectMapper, WHEN_END,   "ASSET", contractId2, "EUR", "CONTRACT2_END");
+    // Step 6: snapshot for contract #2 at start/end
+    final String snap2Start = getSnapshotOrThrow(rawPortfolioApi, mapper, WHEN_START, "ASSET", contractId2, "EUR", "CONTRACT2_START");
+    final String snap2End   = getSnapshotOrThrow(rawPortfolioApi, mapper, WHEN_END,   "ASSET", contractId2, "EUR", "CONTRACT2_END");
 
     // Contract #2 value in EUR: USD quantity * (EUR per 1 USD) at the date
-    final double pUsdStartEur = findAssetPriceEurFromSnapshot(objectMapper, snap2StartAsset, usdId);
-    final double pUsdEndEur   = findAssetPriceEurFromSnapshot(objectMapper, snap2EndAsset, usdId);
-
-    ensureNotNaN(pUsdStartEur, "USD price(EUR per 1 USD) @ start from snapshot");
-    ensureNotNaN(pUsdEndEur, "USD price(EUR per 1 USD) @ end from snapshot");
+    final double pUsdStartEur = priceOrThrow(mapper, snap2Start, usdId, "USD price(EUR per 1 USD) @ start");
+    final double pUsdEndEur   = priceOrThrow(mapper, snap2End, usdId, "USD price(EUR per 1 USD) @ end");
 
     final double v2Start = usdQtyForContract2 * pUsdStartEur;
     final double v2End   = usdQtyForContract2 * pUsdEndEur;
     final double r2 = (v2End / v2Start) - 1.0;
 
-    System.out.println("CONTRACT2_VALUE_EUR_2024_01_01=" + v2Start);
-    System.out.println("CONTRACT2_VALUE_EUR_2025_01_01=" + v2End);
-    System.out.printf("CONTRACT2_TOTAL_RETURN_2024=%.4f%%%n", r2 * 100.0);
+    // Return in percent (not fraction)
+    return new Api102Results(contractId1, contractId2, r1 * 100.0, r2 * 100.0);
+  }
 
-    // ========= API101 (risk profile) - unchanged =========
+  private static String createContract1(ObjectMapper mapper,
+                                        RawPortfolioApi rawPortfolioApi,
+                                        String dbId,
+                                        String citiId,
+                                        String amundiId,
+                                        String eurId) throws Exception {
+    final String requested = "contract_" + UUID.randomUUID();
+
+    final ObjectNode contract = mapper.createObjectNode();
+    contract.put("contractId", requested);
+    contract.put("when", WHEN_START);
+    contract.put("useCorporateActions", true);
+
+    final ArrayNode investments = contract.putArray("investments");
+    investments.add(investment(mapper, dbId, QTY_DB, "EUR"));
+    investments.add(investment(mapper, citiId, QTY_CITI, "USD"));
+    investments.add(investment(mapper, amundiId, QTY_AMUNDI, "EUR"));
+    investments.add(investment(mapper, eurId, QTY_EUR, "EUR"));
+
+    final Response resp = rawPortfolioApi.createTemporaryContract(contract);
+    final String body = readBody(resp);
+
+    if (resp.status() < 200 || resp.status() >= 300) {
+      throw new IllegalStateException("TEMP_CONTRACT_1 failed. Body: " + body);
+    }
+
+    String id = mapper.readTree(body).path("contractId").asText(null);
+    if (id == null || id.isBlank()) id = requested;
+    return id;
+  }
+
+  private static String createContract2Usd(ObjectMapper mapper,
+                                           RawPortfolioApi rawPortfolioApi,
+                                           String usdId,
+                                           double usdQty) throws Exception {
+    final String requested = "contract_" + UUID.randomUUID();
+
+    final ObjectNode contract = mapper.createObjectNode();
+    contract.put("contractId", requested);
+    contract.put("when", WHEN_START);
+    contract.put("useCorporateActions", true);
+
+    final ArrayNode investments = contract.putArray("investments");
+    investments.add(investment(mapper, usdId, usdQty, "USD"));
+
+    final Response resp = rawPortfolioApi.createTemporaryContract(contract);
+    final String body = readBody(resp);
+
+    if (resp.status() < 200 || resp.status() >= 300) {
+      throw new IllegalStateException("TEMP_CONTRACT_2 failed. Body: " + body);
+    }
+
+    String id = mapper.readTree(body).path("contractId").asText(null);
+    if (id == null || id.isBlank()) id = requested;
+    return id;
+  }
+
+  // ============================================================
+  // =========================== API101 =========================
+  // ============================================================
+  private static String executeApi101(ObjectMapper mapper,
+                                      RequestInterceptor auth,
+                                      String profilingBaseUrl) {
+
     final RiskProfileApi riskApi = Feign.builder()
-      .decoder(new ApiResponseDecoder(objectMapper))
-      .encoder(new JacksonEncoder(objectMapper))
+      .decoder(new ApiResponseDecoder(mapper))
+      .encoder(new JacksonEncoder(mapper))
       .requestInterceptor(auth)
       .target(RiskProfileApi.class, profilingBaseUrl);
 
@@ -285,7 +299,7 @@ public class Main {
       .requestInterceptor(auth)
       .target(RiskProfileRawGetApi.class, profilingBaseUrl);
 
-    List<String> ownerIds = Collections.singletonList(getOwnerIdFallback());
+    List<String> ownerIds = Collections.singletonList(getOwnerId());
     List<String> tags = Collections.singletonList(TAG_NATURAL_PERSON);
 
     RiskProfileQuestionnaire created = riskApi.createRiskProfile(
@@ -293,10 +307,8 @@ public class Main {
     );
 
     String riskProfileId = created.getId();
-    System.out.println("CREATED_RISK_PROFILE_ID=" + riskProfileId);
 
     String lastModified = fetchLastModified(rawGet, riskProfileId, ACCEPT_LANGUAGE);
-    System.out.println("LAST_MODIFIED_1=" + lastModified);
 
     RiskProfileAnswers answers = new RiskProfileAnswers();
     Answer a = new Answer();
@@ -305,18 +317,53 @@ public class Main {
     answers.addAnswersItem(a);
 
     riskApi.fillRiskProfile(riskProfileId, lastModified, answers, false, ACCEPT_LANGUAGE, null);
-    System.out.println("FILL_1_OK");
 
     lastModified = fetchLastModified(rawGet, riskProfileId, ACCEPT_LANGUAGE);
-    System.out.println("LAST_MODIFIED_2=" + lastModified);
 
     a.setJustification(JUSTIFICATION_TEXT);
     riskApi.fillRiskProfile(riskProfileId, lastModified, answers, false, ACCEPT_LANGUAGE, null);
-    System.out.println("FILL_2_OK_WITH_JUSTIFICATION");
-    System.out.println("FINAL_RISK_PROFILE_ID=" + riskProfileId);
+
+    return riskProfileId;
   }
 
-  // ===== Helpers =====
+  // ============================================================
+  // ====================== OUTPUT FORMAT =======================
+  // ============================================================
+  private static void printFinalOutput(Api102Results api102, String riskProfileId) {
+
+    System.out.println("=============================");
+    System.out.println("API102 RESULTS");
+    System.out.println("=============================");
+    System.out.println("Temporary Contract 1 ID:");
+    System.out.println(api102.contract1Id);
+    System.out.println();
+    System.out.println("Temporary Contract 2 ID:");
+    System.out.println(api102.contract2Id);
+    System.out.println();
+    System.out.println("Contract 1 (European Portfolio)");
+    System.out.printf("Return 2024: %.4f%%%n%n", api102.contract1ReturnPct);
+
+    System.out.println("Contract 2 (USD Investment)");
+    System.out.printf("Return 2024: %.4f%%%n", api102.contract2ReturnPct);
+    System.out.println("=============================");
+    System.out.println();
+    System.out.println("API101 RESULTS");
+    System.out.println("=============================");
+    System.out.println("Risk Profile ID:");
+    System.out.println(riskProfileId);
+    System.out.println("=============================");
+  }
+
+  // ============================================================
+  // =========================== HELPERS ========================
+  // ============================================================
+  private static double priceOrThrow(ObjectMapper mapper, String snapshotJson, String assetId, String label) throws Exception {
+    double v = findAssetPriceEurFromSnapshot(mapper, snapshotJson, assetId);
+    if (Double.isNaN(v)) {
+      throw new IllegalStateException("Could not read " + label + " (NaN). Check snapshot JSON / asset IDs.");
+    }
+    return v;
+  }
 
   private static String readBody(Response resp) throws Exception {
     if (resp == null || resp.body() == null) return "";
@@ -325,38 +372,30 @@ public class Main {
 
   private static String getSnapshotOrThrow(
     RawPortfolioApi rawPortfolioApi,
-    ObjectMapper objectMapper,
+    ObjectMapper mapper,
     String when,
     String aggregation,
     String contractId,
     String currency,
     String label
   ) throws Exception {
+
     Response r = rawPortfolioApi.getAssetsSnapshot(when, aggregation, contractId, currency);
     String body = readBody(r);
-
-    System.out.println("ASSETS_SNAPSHOT_" + label + "_STATUS=" + r.status());
-    System.out.println("ASSETS_SNAPSHOT_" + label + "_RESPONSE=");
-    System.out.println(body);
 
     if (r.status() < 200 || r.status() >= 300) {
       throw new IllegalStateException("assets-snapshot failed (" + label + "). Body: " + body);
     }
 
-    objectMapper.readTree(body);
+    mapper.readTree(body);
     return body;
   }
 
-  private static ObjectNode investment(ObjectMapper om, String positionId, String assetId, double qty, String currency) {
+  private static ObjectNode investment(ObjectMapper om, String assetId, double qty, String currency) {
     ObjectNode n = om.createObjectNode();
     n.put("assetId", assetId);
     n.put("quantity", qty);
     n.put("currency", currency);
-
-    // Required in your demo environment
-//    n.put("positionId", positionId);
-//    n.put("accountId", "tempAccount001");
-
     return n;
   }
 
@@ -375,8 +414,9 @@ public class Main {
     };
   }
 
-  private static String getOwnerIdFallback() {
-    return "anand.naray@hcltech.com";
+  private static String getOwnerId() {
+    // Avoid hardcoding your email in GitHub
+    return System.getenv().getOrDefault("OWNER_ID", "demo.user@example.com");
   }
 
   private static String fetchLastModified(RiskProfileRawGetApi rawGet, String riskProfileId, String acceptLanguage) {
@@ -391,18 +431,12 @@ public class Main {
     throw new IllegalStateException("No Last-Modified header found in GET /risk-profiles/{id} response.");
   }
 
-  private static String extractFirstAssetId(ObjectMapper objectMapper, String json) throws Exception {
-    JsonNode root = objectMapper.readTree(json);
+  private static String extractFirstAssetId(ObjectMapper mapper, String json) throws Exception {
+    JsonNode root = mapper.readTree(json);
     JsonNode arr = root.has("assets") ? root.get("assets") : root;
     if (!arr.isArray() || arr.size() == 0) {
-      throw new IllegalStateException("No assets found in response : " + json);
+      throw new IllegalStateException("No assets found in response: " + json);
     }
     return arr.get(0).path("id").asText();
-  }
-
-  private static void ensureNotNaN(double v, String label) {
-    if (Double.isNaN(v)) {
-      throw new IllegalStateException("Could not read " + label + " (NaN). Check snapshot JSON / asset IDs.");
-    }
   }
 }
